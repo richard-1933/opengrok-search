@@ -5,8 +5,11 @@ name = "pypi"
 
 [packages]
 requests = "*"
-pandas = "*"
 tqdm = "*"
+pandas = "*"
+cx-oracle = "*"
+psycopg2 = "*"
+openpyxl = "*"
 
 [dev-packages]
 
