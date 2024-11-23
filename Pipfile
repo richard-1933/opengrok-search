@@ -7,9 +7,9 @@ name = "pypi"
 requests = "*"
 tqdm = "*"
 pandas = "*"
-cx-oracle = "*"
 psycopg2 = "*"
 openpyxl = "*"
+cx-oracle = "*"
 
 [dev-packages]
 

@@ -1,9 +1,17 @@
+import os.path
+import re
 import sys
+from enum import Enum
 import pandas as pd
 import requests as rq
-from tqdm import tqdm
-from enum import Enum
+from openpyxl import load_workbook, worksheet
+from openpyxl.cell import Cell
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
+from openpyxl.styles import Alignment,Font
+from pandas.core.interchange.dataframe_protocol import DataFrame
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from tqdm import tqdm
 
 rq.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -15,30 +23,88 @@ headers = {
     "Accept": "application/json"
 }
 
+
 class FileFormat(Enum):
     EXCEL = 'excel'
     CSV = 'csv'
 
 
-def save_result_to_file(records: dict, file_format: FileFormat, file_path: str) -> None:
-    """
-    將查詢結果保存為文件。
+def write_to_excel(data: DataFrame, excel_file_path: str, group_name: str = None) -> None:
+    def highlight_content(cell: Cell) -> None:
+        pattern = r'(<b>.*</b>)'
+        if (cell.value is not None) and re.match(f".*{pattern}.*", cell.value, re.I):
+            rich_content = CellRichText()
+            for content in re.split(pattern, cell.value, re.I):
+                if re.match(pattern, content, re.I):
+                    content = re.sub(r'</?b>', '', content)
+                    rich_content.append(TextBlock(font=InlineFont(b=True, color='FF0000'), text=content))
+                else:
+                    rich_content.append(content)
+            cell.value = rich_content
 
-    參數:
-    results (dict): 查詢結果。
-    file_path (str): 文件保存路徑。
-    file_format (str): 文件格式，支持'csv'和'excel'，默認為'csv'。
-    """
-    df = pd.DataFrame.from_dict(records, orient='index')
+    def format_sheet(sheet: worksheet) -> None:
+        for col in sheet.columns:
+            max_len = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(cell.value) > max_len:
+                        max_len = len(cell.value)
+                except:
+                    pass
+            adj_width = (max_len + 2)
+            sheet.column_dimensions[column].width = adj_width
+            default_font = Font(name='Times New Roman')
+            for cell in col:
+                cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+                cell.font = default_font
+                highlight_content(cell)
 
-    if file_format == FileFormat.EXCEL:
-        df.to_excel(file_path, index=False, engine='openpyxl')
-    elif file_format == FileFormat.CSV:
-        df.to_csv(file_path, index=False)
+    # Write DataFrame to Excel
+    with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
+        if group_name:
+            for group_name, group_data in data.groupby(group_name):
+                group_data.to_excel(writer, sheet_name=group_name, index=False)
+        else:
+            data.to_excel(writer, sheet_name='SCAN_RESULT', index=False)
+
+    # Load the workbook and select the active worksheet
+    wb = load_workbook(excel_file_path)
+    for sheet in wb.worksheets:
+        wb.active = sheet
+        format_sheet(wb.active)
+
+    # Save the workbook
+    wb.save(excel_file_path)
+
+
+def scan_to_excel(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
+                  fetch_all: bool = False, export_file: str=os.path.curdir+os.sep+'scan_result.xlnx') -> (str, DataFrame):
+    records = code_scan(query_params, start_idx, size_per_fetch, fetch_all)
+    if records:
+        data = []
+        for file_path, entries in records.items():
+            for entry in entries:
+                data.append({
+                    "system": re.findall(r"^/([^/]+)/", file_path, re.I)[0],
+                    "file_path": file_path,
+                    "line": entry['lineNumber'],
+                    "content": _remove_illegal_chars(entry['line'])
+                })
+        df = pd.DataFrame(data)
+        print(f"Ttl Scan Results:　{len(records)}, Ttl Output Count: {len(data)}")
+        write_to_excel(df, export_file,"system")
+        return export_file, df
     else:
-        raise ValueError("Unsupported file format. Use 'csv' or 'excel'.")
+        print("No records found.")
+        return None, None
 
-def code_scan(qry_params: dict, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
+
+def scan_to_csv() -> None:
+    pass
+
+
+def code_scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
               fetch_all: bool = False) -> dict:
     """
     執行代碼掃描。
@@ -52,9 +118,15 @@ def code_scan(qry_params: dict, start_idx: int = 0, size_per_fetch: int = DEFAUL
     返回:
     dict: 包含所有抓取記錄的字典。
     """
-    params = qry_params.copy()
-    params["start"] = start_idx
-    params["maxresults"] = size_per_fetch
+    params = None
+    if isinstance(query_params, dict):
+        params = list(query_params.items())
+    else:
+        params = list(query_params)
+
+    params.append(('start', start_idx))
+    params.append(('maxresults', size_per_fetch))
+
     ttl_records = dict()
     pbar = tqdm(total=0, desc="Fetching:", file=sys.stdout, unit="records", leave=True,
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} records ')
@@ -69,12 +141,18 @@ def code_scan(qry_params: dict, start_idx: int = 0, size_per_fetch: int = DEFAUL
         if len(tmp_records) == 0 or not fetch_all:
             keep_fetching = False
         else:
-            params["start"] += DEFAULT_SIZE_PER_FETCH
+            for i, (key, value) in enumerate(params):
+                if key == 'start':
+                    params[i] = (key, (value + size_per_fetch))
 
     return ttl_records
 
+def _remove_illegal_chars(value):
+    if isinstance(value, str):
+        return ''.join(c for c in value if c.isprintable() or c == '\n')
+    return value
 
-def _do_fetch_data(qry_payload: dict) -> dict:
+def _do_fetch_data(qry_payload: list) -> dict:
     try:
         response = rq.get(url, params=qry_payload, headers=headers, verify=False)
         response.raise_for_status()
