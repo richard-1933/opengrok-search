@@ -10,6 +10,8 @@ pandas = "*"
 psycopg2 = "*"
 openpyxl = "*"
 cx-oracle = "*"
+jsonschema = "*"
+opengrok-search = {file = "dist/opengrok_search-0.0.1-py3-none-any.whl"}
 
 [dev-packages]
 

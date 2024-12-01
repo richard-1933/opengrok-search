@@ -8,7 +8,7 @@ from openpyxl import load_workbook, worksheet
 from openpyxl.cell import Cell
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
-from openpyxl.styles import Alignment,Font
+from openpyxl.styles import Alignment, Font
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from tqdm import tqdm
@@ -23,10 +23,9 @@ headers = {
     "Accept": "application/json"
 }
 
-
-class FileFormat(Enum):
-    EXCEL = 'excel'
-    CSV = 'csv'
+# class FileFormat(Enum):
+#     EXCEL = 'excel'
+#     CSV = 'csv'
 
 
 def write_to_excel(data: DataFrame, excel_file_path: str, group_name: str = None) -> None:
@@ -76,11 +75,12 @@ def write_to_excel(data: DataFrame, excel_file_path: str, group_name: str = None
 
     # Save the workbook
     wb.save(excel_file_path)
+    print(f"File has been saved to: {os.path.abspath(excel_file_path)}")
 
 
 def scan_to_excel(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
-                  fetch_all: bool = False, export_file: str=os.path.curdir+os.sep+'scan_result.xlnx') -> (str, DataFrame):
-    records = code_scan(query_params, start_idx, size_per_fetch, fetch_all)
+                  fetch_all: bool = False, export_file: str=os.path.curdir+os.sep+'scan_result.xlsx',**server_config) -> (str, DataFrame):
+    records = scan(query_params, start_idx, size_per_fetch, fetch_all, **server_config)
     if records:
         data = []
         for file_path, entries in records.items():
@@ -99,13 +99,8 @@ def scan_to_excel(query_params, start_idx: int = 0, size_per_fetch: int = DEFAUL
         print("No records found.")
         return None, None
 
-
-def scan_to_csv() -> None:
-    pass
-
-
-def code_scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
-              fetch_all: bool = False) -> dict:
+def scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SIZE_PER_FETCH,
+         fetch_all: bool = False, **server_config: dict) -> dict:
     """
     執行代碼掃描。
 
@@ -118,6 +113,8 @@ def code_scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SI
     返回:
     dict: 包含所有抓取記錄的字典。
     """
+    _process_server_config(server_config)
+
     params = None
     if isinstance(query_params, dict):
         params = list(query_params.items())
@@ -128,7 +125,7 @@ def code_scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SI
     params.append(('maxresults', size_per_fetch))
 
     ttl_records = dict()
-    pbar = tqdm(total=0, desc="Fetching:", file=sys.stdout, unit="records", leave=True,
+    pbar = tqdm(total=0, desc="Fetching:", file=sys.stdout, unit="records", leave=True, ncols=50,
                 bar_format='{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} records ')
     keep_fetching = True
     while keep_fetching:
@@ -147,7 +144,24 @@ def code_scan(query_params, start_idx: int = 0, size_per_fetch: int = DEFAULT_SI
 
     return ttl_records
 
+
+def _process_server_config(server_config):
+    """
+    處理伺服器設定。
+    :param server_config:
+    :return:
+    """
+    global url
+    if 'url' in server_config:
+        url = server_config['url']
+
+
 def _remove_illegal_chars(value):
+    """
+    移除不可列印字元。
+    :param value:
+    :return:
+    """
     if isinstance(value, str):
         return ''.join(c for c in value if c.isprintable() or c == '\n')
     return value
@@ -159,6 +173,7 @@ def _do_fetch_data(qry_payload: list) -> dict:
         return response.json()
     except rq.exceptions.HTTPError as http_err:
         print(f"HTTP error occurred: {http_err}")
+        raise http_err
     except Exception as err:
         print(f"Other error occurred: {err}")
-    return None
+        raise err
