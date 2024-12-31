@@ -151,10 +151,12 @@ def _process_server_config(server_config):
     :param server_config:
     :return:
     """
-    global url
+    global url, headers
     if 'url' in server_config:
         url = server_config['url']
 
+    if 'headers' in server_config:
+        headers = server_config['headers']
 
 def _remove_illegal_chars(value):
     """
